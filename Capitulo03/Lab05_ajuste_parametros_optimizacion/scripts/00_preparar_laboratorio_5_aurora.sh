@@ -145,7 +145,8 @@ if ! command -v pgbench >/dev/null 2>&1; then
   fail "pgbench no quedó disponible después de instalar paquetes PostgreSQL."
 fi
 
-ok "pgbench disponible: $(pgbench --version)"
+pgbench --help >/dev/null 2>&1 || fail "pgbench existe pero no responde correctamente a --help."
+ok "pgbench disponible y funcional"
 
 if ! command -v python3 >/dev/null 2>&1; then
   fail "python3 no está disponible en CloudShell."
@@ -379,15 +380,13 @@ psql "$PG_CONN_ADMIN" \
   -v ON_ERROR_STOP=1 \
   -c "SELECT current_database(), current_user, pg_is_in_recovery() AS es_replica;"
 
-log "Validando que pgbench pueda conectar al writer"
+log "Validando cliente pgbench"
 
-PGPASSWORD="$AURORA_MASTER_PASSWORD" \
-pgbench \
-  -h "$AURORA_ENDPOINT" \
-  -p "$AURORA_PORT" \
-  -U "$AURORA_MASTER_USER" \
-  -d "$AURORA_DBNAME" \
-  --version >/dev/null
+# Algunas versiones de pgbench no soportan --version.
+# Para validar que el binario está funcional usamos --help.
+# La conectividad real al writer ya fue validada arriba con psql.
+pgbench --help >/dev/null 2>&1 \
+  || fail "pgbench existe, pero no responde correctamente a --help."
 
 ok "pgbench validado"
 
@@ -457,7 +456,7 @@ Antes de iniciar el Laboratorio 5, ejecuta:
 
 Validación rápida:
   psql "host=\$AURORA_ENDPOINT port=\$AURORA_PORT dbname=postgres user=\$AURORA_MASTER_USER password=\$AURORA_MASTER_PASSWORD sslmode=require" -c "SELECT pg_is_in_recovery() AS es_replica;"
-  pgbench --version
+  pgbench --help >/dev/null && echo "pgbench OK"
 
 Luego continúa con el Reto 1 de la práctica.
 EOF
