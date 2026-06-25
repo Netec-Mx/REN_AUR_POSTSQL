@@ -8,15 +8,15 @@
 
 En este laboratorio final vas a validar y documentar una arquitectura avanzada de **AWS Aurora PostgreSQL** para un escenario empresarial de alta concurrencia. Revisarás la configuración base del clúster, validarás optimizaciones aplicadas en prácticas anteriores, ejecutarás una medición corta de rendimiento, revisarás el estado de **RDS Proxy**, consultarás métricas de **Performance Insights** y **CloudWatch**, evaluarás la preparación para **Disaster Recovery multi-región** y generarás un documento técnico final de arquitectura.
 
-Este laboratorio no busca crear toda la arquitectura desde cero. Su objetivo es de cierre y síntesis:
+Este laboratorio integra validación, medición, observabilidad y creación controlada de un ejemplo simple de recuperación ante desastre multi-región:
 
-> **Validar → Medir → Evaluar → Documentar → Recomendar → Cerrar**
+> **Validar → Medir → Observar → Crear → Replicar → Documentar → Cerrar**
 
-La práctica está diseñada para completarse en **45 minutos**. Por eso, **Aurora Global Database, RDS Proxy y recursos multi-región se validan si ya existen**. Si no existen, el estudiante documentará la arquitectura objetivo, los comandos de referencia y los riesgos de implementación.
+La práctica está diseñada para completarse en **45 minutos de trabajo guiado**, aunque la creación real de recursos de **Aurora Global Database** puede requerir esperas adicionales de AWS. En esta versión, el reto de Aurora Global Database no será únicamente demostrativo: crearás o reutilizarás un Global Database simple, agregarás una región secundaria y validarás replicación básica con una tabla de prueba.
 
 La práctica está diseñada como una serie de **retos guiados**. En cada reto primero intentarás resolver el objetivo con pistas. Si te bloqueas, podrás abrir la **solución sugerida**. La solución está oculta para fomentar el razonamiento, pero es completa y funcional para no extender el tiempo del laboratorio.
 
-> ⚠️ **Importante:** Esta práctica no ejecuta switchover/failover real como paso obligatorio. Esos procedimientos solo deben ejecutarse con autorización del instructor y en un entorno preparado para pruebas de DR.
+> ⚠️ **Importante:** Esta práctica crea recursos multi-región si ejecutas el Reto 6. No ejecutes switchover/failover real como paso obligatorio. Esos procedimientos solo deben ejecutarse con autorización del instructor y en un entorno preparado para pruebas de DR.
 
 ---
 
@@ -31,8 +31,8 @@ Al finalizar este laboratorio, podrás:
 - Validar RDS Proxy como capa de gestión de conexiones si está disponible.
 - Documentar RDS Proxy como recomendación si no existe.
 - Revisar métricas de Performance Insights y CloudWatch.
-- Evaluar preparación para DR multi-región con Aurora Global Database.
-- Diferenciar switchover y failover en un escenario de DR.
+- Crear un ejemplo simple real de Aurora Global Database.
+- Validar replicación básica hacia una región secundaria y diferenciar switchover/failover.
 - Definir objetivos RPO/RTO.
 - Generar un documento técnico final de arquitectura.
 - Empaquetar evidencia del laboratorio integrador.
@@ -59,7 +59,7 @@ Antes de iniciar, debes contar con:
 - Performance Insights habilitado en la instancia writer para validación completa.
 - `pg_stat_statements` disponible en la base de datos objetivo.
 - RDS Proxy creado previamente si se desea validarlo en vivo.
-- Aurora Global Database creado previamente si se desea validar DR real.
+- Permisos para crear Aurora Global Database y recursos mínimos en la región secundaria si se ejecuta el Reto 6.
 - Permisos IAM para consultar RDS, RDS Proxy, Performance Insights, CloudWatch, Aurora Global Database y STS.
 - Conocimientos básicos de arquitectura Aurora, endpoints, RDS Proxy, Performance Insights, CloudWatch, RPO/RTO y documentación técnica.
 
@@ -129,7 +129,7 @@ Usa estos valores durante toda la práctica para mantener consistencia entre los
 | Benchmark directo | `09_benchmark_directo.txt` | Medición corta directa |
 | Benchmark proxy | `09_benchmark_proxy.txt` | Medición corta vía proxy si existe |
 | Estado PI | `09_performance_insights_estado.txt` | Estado Performance Insights |
-| DBLoad waits | `09_pi_dbload_waits.json` | PI API por waits |
+| DBLoad waits | `09_pi_dbload.json / 09_pi_top_waits.json / 09_pi_top_sql.json` | PI API por waits |
 | Métricas CloudWatch | `09_cloudwatch_metricas.txt` | Métricas básicas |
 | Dashboard mínimo | `09_cloudwatch_dashboard_minimo.json` | Plantilla de dashboard |
 | Diseño DR | `09_diseno_dr_multi_region.md` | Diseño si Global DB no existe |
@@ -204,13 +204,13 @@ Después de esta validación, continúa con el **Reto 1**.
 | Reto 3 | Ejecutar benchmark corto de validación | 6 min |
 | Reto 4 | Validar RDS Proxy y conexiones | 5 min |
 | Reto 5 | Revisar observabilidad: Performance Insights y CloudWatch | 7 min |
-| Reto 6 | Evaluar DR multi-región / Aurora Global Database | 7 min |
+| Reto 6 | Creación de Aurora Global Database | 7 min + espera AWS |
 | Reto 7 | Generar documento técnico de arquitectura | 6 min |
 | Reto 8 | Validar estado final previo al cierre | 2 min |
 | Reto 9 | Empaquetar evidencia y limpiar si aplica | 1 min |
-| **Total** |  | **45 min** |
+| **Total** |  | **45 min + espera AWS** |
 
-> 💡 **Nota operativa:** Este laboratorio es integrador. Funciona aunque RDS Proxy o Aurora Global Database no existan; en ese caso, se documentan como componentes recomendados y se genera evidencia de diseño.
+> 💡 **Nota operativa:** Este laboratorio es integrador. RDS Proxy puede validarse si existe o documentarse como recomendación. Aurora Global Database se trabaja con un ejemplo real simple en el Reto 6; su creación puede tardar más que el tiempo pedagógico estimado.
 
 ---
 
@@ -443,8 +443,8 @@ psql "host=$AURORA_ENDPOINT port=$AURORA_PORT dbname=$AURORA_DBNAME user=$AURORA
 
 SELECT
   schemaname,
-  tablename,
-  indexname,
+  relname AS tablename,
+  indexrelname AS indexname,
   pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
   idx_scan,
   idx_tup_read,
@@ -842,7 +842,7 @@ Una arquitectura madura no solo debe rendir bien; también debe poder observarse
 | Evidencia | Archivo |
 |---|---|
 | Estado Performance Insights | `09_performance_insights_estado.txt` |
-| DBLoad por waits | `09_pi_dbload_waits.json` |
+| DBLoad por waits | `09_pi_dbload.json / 09_pi_top_waits.json / 09_pi_top_sql.json` |
 | Métricas CloudWatch | `09_cloudwatch_metricas.txt` |
 | Dashboard mínimo | `09_cloudwatch_dashboard_minimo.json` |
 
@@ -881,16 +881,52 @@ echo "=== Consultar DBLoad con PI API ==="
 export PI_START_TIME=$(date -u -d '15 minutes ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
 export PI_END_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+export AURORA_DBI_RESOURCE_ID=$(aws rds describe-db-instances \
+  --db-instance-identifier "$AURORA_WRITER_INSTANCE" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "DBInstances[0].DbiResourceId" \
+  --output text)
+
+echo "DbiResourceId usado por Performance Insights API: $AURORA_DBI_RESOURCE_ID"
+
 aws pi get-resource-metrics \
   --service-type RDS \
-  --identifier "$AURORA_INSTANCE_ARN" \
-  --metric-queries '[{"Metric":"db.load.avg","GroupBy":{"Group":"db.wait_event_type","Dimensions":["db.wait_event_type"],"Limit":5}}]' \
+  --identifier "$AURORA_DBI_RESOURCE_ID" \
+  --metric-queries '[{"Metric":"db.load.avg"}]' \
   --start-time "$PI_START_TIME" \
   --end-time "$PI_END_TIME" \
   --period-in-seconds 60 \
   --region "$AWS_PRIMARY_REGION" \
   --output json \
-  | tee 09_pi_dbload_waits.json >/dev/null || true
+  | tee 09_pi_dbload.json >/dev/null || true
+
+echo "=== Consultar Top wait events con PI API ==="
+
+aws pi describe-dimension-keys \
+  --service-type RDS \
+  --identifier "$AURORA_DBI_RESOURCE_ID" \
+  --start-time "$PI_START_TIME" \
+  --end-time "$PI_END_TIME" \
+  --metric "db.load.avg" \
+  --group-by '{"Group":"db.wait_event","Limit":10}' \
+  --period-in-seconds 300 \
+  --region "$AWS_PRIMARY_REGION" \
+  --output json \
+  | tee 09_pi_top_waits.json >/dev/null || true
+
+echo "=== Consultar Top SQL con PI API ==="
+
+aws pi describe-dimension-keys \
+  --service-type RDS \
+  --identifier "$AURORA_DBI_RESOURCE_ID" \
+  --start-time "$PI_START_TIME" \
+  --end-time "$PI_END_TIME" \
+  --metric "db.load.avg" \
+  --group-by '{"Group":"db.sql_tokenized","Limit":10}' \
+  --period-in-seconds 300 \
+  --region "$AWS_PRIMARY_REGION" \
+  --output json \
+  | tee 09_pi_top_sql.json >/dev/null || true
 
 echo "=== Consultar métricas CloudWatch básicas ==="
 
@@ -971,7 +1007,7 @@ DOC
 
 ```bash
 ls -lh 09_performance_insights_estado.txt \
-       09_pi_dbload_waits.json \
+       09_pi_dbload.json / 09_pi_top_waits.json / 09_pi_top_sql.json \
        09_cloudwatch_metricas.txt \
        09_cloudwatch_dashboard_minimo.json
 ```
@@ -990,23 +1026,23 @@ Debes tener evidencia de Performance Insights, PI API / DBLoad, CloudWatch metri
 
 ---
 
-# 🧩 Reto 6. Evaluar DR multi-región / Aurora Global Database
+# 🧩 Reto 6. Creación de Aurora Global Database
 
 ## ⏱️ Tiempo estimado
 
-**7 minutos**
+**7 minutos + espera AWS**
 
 ---
 
 ## 🎯 Objetivo del reto
 
-Evaluar si existe una estrategia de DR multi-región con Aurora Global Database o documentar una arquitectura objetivo si aún no existe.
+Crear un ejemplo simple real de **Aurora Global Database** usando el clúster Aurora existente como primario y una región secundaria como destino de lectura/DR.
 
 ---
 
 ## 🧠 Escenario
 
-No todos los entornos de laboratorio tienen Aurora Global Database precreado. En un laboratorio de 45 minutos, no es realista crear una arquitectura multi-región completa desde cero. Por eso, este reto tiene dos caminos: validar si existe o documentar el diseño objetivo.
+El equipo necesita validar que la arquitectura puede extenderse a una estrategia multi-región. En este reto no harás failover ni switchover; crearás una Global Database básica, agregarás una región secundaria, crearás una instancia reader secundaria y validarás replicación con una tabla simple.
 
 ---
 
@@ -1014,27 +1050,47 @@ No todos los entornos de laboratorio tienen Aurora Global Database precreado. En
 
 | Elemento | Valor |
 |---|---|
-| Global DB esperado | `$AURORA_GLOBAL_CLUSTER_ID` o `aurora-lab-global` |
-| Cluster secundario esperado | `$AURORA_SECONDARY_CLUSTER_ID` |
+| Global DB | `$AURORA_GLOBAL_CLUSTER_ID` o `aurora-lab-global` |
+| Cluster primario | `$AURORA_CLUSTER_ID` |
+| Cluster secundario | `$AURORA_SECONDARY_CLUSTER_ID` |
+| Instancia secundaria | `$AURORA_SECONDARY_INSTANCE_ID` |
 | Región primaria | `$AWS_PRIMARY_REGION` |
 | Región secundaria | `$AWS_SECONDARY_REGION` |
+| Security Group secundario | `$GLOBAL_SECONDARY_SG_ID` |
+| DB Subnet Group secundario | `$GLOBAL_SECONDARY_DB_SUBNET_GROUP` |
 | Evidencia Global DB | `09_global_database_descripcion.json` |
-| Evidencia lag | `09_global_database_replication_lag.txt` |
-| Diseño si no existe | `09_diseno_dr_multi_region.md` |
+| Evidencia secundaria | `09_global_database_secondary_cluster.json` |
+| Validación SQL secundaria | `09_globaldb_secondary_validation.txt` |
+| Runbook DR | `09_diseno_dr_multi_region.md` |
+| Variables ejemplo | `09_globaldb_example_env.sh` |
 
 ---
 
 ## 🛠️ Tu reto
 
-Evalúa si existe Global Database, clúster primario, región secundaria, estado de miembros, lag de replicación si aplica, RPO/RTO objetivo y diferencia entre switchover y failover.
+Crea o reutiliza:
+
+- Aurora Global Database.
+- Red mínima en región secundaria.
+- Security Group temporal en región secundaria.
+- DB Subnet Group secundario.
+- Clúster secundario ligado al Global Database.
+- Instancia secundaria reader.
+- Tabla de prueba en región primaria.
+- Validación de replicación en región secundaria.
+- Documento de diseño/runbook DR.
 
 ---
 
 ## 💡 Pistas
 
-- Switchover se usa para cambios planeados en entornos sanos.
-- Failover se usa para recuperación ante desastre.
-- No ejecutes failover sin autorización.
+- No ejecutes failover.
+- No ejecutes switchover.
+- El clúster secundario es de lectura.
+- El clúster primario conserva escrituras.
+- Usa la misma versión de motor que el clúster primario.
+- La creación real puede tardar varios minutos.
+- Si el clúster ya pertenece a un Global Database, reutiliza el existente.
 
 ---
 
@@ -1042,96 +1098,530 @@ Evalúa si existe Global Database, clúster primario, región secundaria, estado
 <summary>✅ Ver solución sugerida</summary>
 
 ```bash
-echo "=== Definir nombre esperado de Global Database ==="
+echo "=== Reto 6: Crear ejemplo simple real de Aurora Global Database ==="
+
+set -euo pipefail
+
+if [ -f ./lab9_aurora_env.sh ]; then
+  source ./lab9_aurora_env.sh
+else
+  echo "ERROR: No existe ./lab9_aurora_env.sh"
+  echo "Ejecuta primero el script de preparación del Laboratorio 9."
+  exit 1
+fi
+
+export AWS_PRIMARY_REGION="${AWS_PRIMARY_REGION:-${AWS_REGION:-us-west-2}}"
+export AWS_SECONDARY_REGION="${AWS_SECONDARY_REGION:-us-east-1}"
 
 export AURORA_GLOBAL_CLUSTER_ID="${AURORA_GLOBAL_CLUSTER_ID:-aurora-lab-global}"
 export AURORA_SECONDARY_CLUSTER_ID="${AURORA_SECONDARY_CLUSTER_ID:-aurora-lab-cluster-secondary}"
+export AURORA_SECONDARY_INSTANCE_ID="${AURORA_SECONDARY_INSTANCE_ID:-aurora-lab-secondary-instance-1}"
 
-echo "Global cluster esperado: $AURORA_GLOBAL_CLUSTER_ID"
+export GLOBAL_SECONDARY_DB_SUBNET_GROUP="${GLOBAL_SECONDARY_DB_SUBNET_GROUP:-aurora-lab-global-secondary-subnet-group}"
+export GLOBAL_SECONDARY_SG_NAME="${GLOBAL_SECONDARY_SG_NAME:-aurora-lab-global-secondary-sg}"
 
-echo "=== Validar si existe Aurora Global Database ==="
+export AURORA_PORT="${AURORA_PORT:-5432}"
+export AURORA_INSTANCE_CLASS="${AURORA_INSTANCE_CLASS:-db.r6g.large}"
 
-if aws rds describe-global-clusters \
-  --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
-  --region "$AWS_PRIMARY_REGION" >/dev/null 2>&1; then
+echo "Región primaria:    $AWS_PRIMARY_REGION"
+echo "Región secundaria:  $AWS_SECONDARY_REGION"
+echo "Global DB:          $AURORA_GLOBAL_CLUSTER_ID"
+echo "Cluster primario:   $AURORA_CLUSTER_ID"
+echo "Cluster secundario: $AURORA_SECONDARY_CLUSTER_ID"
+echo "Instancia secundaria: $AURORA_SECONDARY_INSTANCE_ID"
 
-  echo "Aurora Global Database encontrado: $AURORA_GLOBAL_CLUSTER_ID" \
-    | tee 09_global_database_estado.txt
+echo "=== Validar variables requeridas ==="
 
-  aws rds describe-global-clusters \
+: "${AURORA_CLUSTER_ID:?Falta AURORA_CLUSTER_ID}"
+: "${AURORA_ENDPOINT:?Falta AURORA_ENDPOINT}"
+: "${AURORA_DBNAME:?Falta AURORA_DBNAME}"
+: "${AURORA_MASTER_USER:?Falta AURORA_MASTER_USER}"
+: "${AURORA_MASTER_PASSWORD:?Falta AURORA_MASTER_PASSWORD}"
+
+echo "=== Obtener datos del clúster primario ==="
+
+export PRIMARY_CLUSTER_ARN=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_CLUSTER_ID" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "DBClusters[0].DBClusterArn" \
+  --output text)
+
+export AURORA_ENGINE=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_CLUSTER_ID" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "DBClusters[0].Engine" \
+  --output text)
+
+export AURORA_ENGINE_VERSION=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_CLUSTER_ID" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "DBClusters[0].EngineVersion" \
+  --output text)
+
+export PRIMARY_GLOBAL_CLUSTER=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_CLUSTER_ID" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "DBClusters[0].GlobalClusterIdentifier" \
+  --output text 2>/dev/null || echo "None")
+
+echo "Primary ARN:        $PRIMARY_CLUSTER_ARN"
+echo "Engine:             $AURORA_ENGINE"
+echo "Engine version:     $AURORA_ENGINE_VERSION"
+echo "Global actual:      $PRIMARY_GLOBAL_CLUSTER"
+
+echo "=== Crear o reutilizar Aurora Global Database ==="
+
+if [ "$PRIMARY_GLOBAL_CLUSTER" != "None" ] && [ -n "$PRIMARY_GLOBAL_CLUSTER" ]; then
+  echo "El clúster primario ya pertenece a Global Database: $PRIMARY_GLOBAL_CLUSTER"
+  export AURORA_GLOBAL_CLUSTER_ID="$PRIMARY_GLOBAL_CLUSTER"
+else
+  if aws rds describe-global-clusters \
     --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
-    --region "$AWS_PRIMARY_REGION" \
-    --query "GlobalClusters[0].{GlobalCluster:GlobalClusterIdentifier,Estado:Status,Engine:Engine,EngineVersion:EngineVersion,Members:GlobalClusterMembers}" \
-    --output json \
-    | tee 09_global_database_descripcion.json >/dev/null
+    --region "$AWS_PRIMARY_REGION" >/dev/null 2>&1; then
 
-  cat 09_global_database_descripcion.json | jq '.'
+    echo "Global Database ya existe: $AURORA_GLOBAL_CLUSTER_ID"
 
-  echo "=== Consultar lag de replicación si existe cluster secundario ==="
+  else
 
-  aws cloudwatch get-metric-statistics \
-    --namespace "AWS/RDS" \
-    --metric-name "AuroraGlobalDBReplicationLag" \
-    --dimensions Name=DBClusterIdentifier,Value="$AURORA_SECONDARY_CLUSTER_ID" \
-    --start-time "$CW_START_TIME" \
-    --end-time "$CW_END_TIME" \
-    --period 60 \
-    --statistics Average Maximum \
+    echo "Creando Global Database a partir del clúster primario existente..."
+
+    aws rds create-global-cluster \
+      --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+      --source-db-cluster-identifier "$PRIMARY_CLUSTER_ARN" \
+      --region "$AWS_PRIMARY_REGION" \
+      --output json \
+      | tee 09_global_database_create.json >/dev/null
+
+    echo "Global Database creado."
+  fi
+fi
+
+echo "=== Preparar red mínima pública en región secundaria ==="
+
+export SECONDARY_VPC_ID=$(aws ec2 describe-vpcs \
+  --region "$AWS_SECONDARY_REGION" \
+  --filters "Name=is-default,Values=true" \
+  --query "Vpcs[0].VpcId" \
+  --output text 2>/dev/null || echo "None")
+
+if [ -z "$SECONDARY_VPC_ID" ] || [ "$SECONDARY_VPC_ID" = "None" ]; then
+  echo "No existe VPC default en región secundaria. Creando VPC default..."
+  export SECONDARY_VPC_ID=$(aws ec2 create-default-vpc \
     --region "$AWS_SECONDARY_REGION" \
-    --query "sort_by(Datapoints, &Timestamp)[*].{Tiempo:Timestamp,Promedio:Average,Maximo:Maximum}" \
-    --output table \
-    | tee 09_global_database_replication_lag.txt || true
+    --query "Vpc.VpcId" \
+    --output text)
+fi
+
+echo "VPC secundaria: $SECONDARY_VPC_ID"
+
+echo "=== Validar Internet Gateway en VPC secundaria ==="
+
+export SECONDARY_IGW_ID=$(aws ec2 describe-internet-gateways \
+  --region "$AWS_SECONDARY_REGION" \
+  --filters "Name=attachment.vpc-id,Values=$SECONDARY_VPC_ID" \
+  --query "InternetGateways[0].InternetGatewayId" \
+  --output text 2>/dev/null || echo "None")
+
+if [ -z "$SECONDARY_IGW_ID" ] || [ "$SECONDARY_IGW_ID" = "None" ]; then
+  echo "No existe Internet Gateway asociado. Creando Internet Gateway..."
+
+  export SECONDARY_IGW_ID=$(aws ec2 create-internet-gateway \
+    --region "$AWS_SECONDARY_REGION" \
+    --query "InternetGateway.InternetGatewayId" \
+    --output text)
+
+  aws ec2 create-tags \
+    --region "$AWS_SECONDARY_REGION" \
+    --resources "$SECONDARY_IGW_ID" \
+    --tags Key=Lab,Value=09 Key=Name,Value=aurora-lab-global-secondary-igw >/dev/null
+
+  aws ec2 attach-internet-gateway \
+    --region "$AWS_SECONDARY_REGION" \
+    --internet-gateway-id "$SECONDARY_IGW_ID" \
+    --vpc-id "$SECONDARY_VPC_ID" || true
+fi
+
+echo "Internet Gateway secundario: $SECONDARY_IGW_ID"
+
+echo "=== Validar o crear subnets default en al menos dos AZs ==="
+
+for AZ in $(aws ec2 describe-availability-zones \
+  --region "$AWS_SECONDARY_REGION" \
+  --query "AvailabilityZones[?State=='available'].ZoneName" \
+  --output text | awk '{print $1, $2}'); do
+
+  EXISTING_SUBNET=$(aws ec2 describe-subnets \
+    --region "$AWS_SECONDARY_REGION" \
+    --filters "Name=vpc-id,Values=$SECONDARY_VPC_ID" "Name=availability-zone,Values=$AZ" \
+    --query "Subnets[0].SubnetId" \
+    --output text 2>/dev/null || echo "None")
+
+  if [ -z "$EXISTING_SUBNET" ] || [ "$EXISTING_SUBNET" = "None" ]; then
+    echo "Creando subnet default en $AZ..."
+    aws ec2 create-default-subnet \
+      --availability-zone "$AZ" \
+      --region "$AWS_SECONDARY_REGION" >/dev/null || true
+  fi
+done
+
+export SECONDARY_SUBNET_IDS=$(aws ec2 describe-subnets \
+  --region "$AWS_SECONDARY_REGION" \
+  --filters "Name=vpc-id,Values=$SECONDARY_VPC_ID" \
+  --query "Subnets[0:2].SubnetId" \
+  --output text)
+
+if [ "$(echo "$SECONDARY_SUBNET_IDS" | wc -w)" -lt 2 ]; then
+  echo "ERROR: Se requieren al menos dos subnets en región secundaria."
+  exit 1
+fi
+
+echo "Subnets secundarias: $SECONDARY_SUBNET_IDS"
+
+echo "=== Habilitar auto-assign public IPv4 en subnets secundarias ==="
+
+for SUBNET_ID in $SECONDARY_SUBNET_IDS; do
+  aws ec2 modify-subnet-attribute \
+    --region "$AWS_SECONDARY_REGION" \
+    --subnet-id "$SUBNET_ID" \
+    --map-public-ip-on-launch
+
+  echo "Subnet pública validada: $SUBNET_ID"
+done
+
+echo "=== Validar ruta pública 0.0.0.0/0 hacia Internet Gateway ==="
+
+export SECONDARY_ROUTE_TABLE_ID=$(aws ec2 describe-route-tables \
+  --region "$AWS_SECONDARY_REGION" \
+  --filters "Name=vpc-id,Values=$SECONDARY_VPC_ID" "Name=association.main,Values=true" \
+  --query "RouteTables[0].RouteTableId" \
+  --output text 2>/dev/null || echo "None")
+
+if [ -z "$SECONDARY_ROUTE_TABLE_ID" ] || [ "$SECONDARY_ROUTE_TABLE_ID" = "None" ]; then
+  export SECONDARY_ROUTE_TABLE_ID=$(aws ec2 describe-route-tables \
+    --region "$AWS_SECONDARY_REGION" \
+    --filters "Name=vpc-id,Values=$SECONDARY_VPC_ID" \
+    --query "RouteTables[0].RouteTableId" \
+    --output text)
+fi
+
+echo "Route table secundaria: $SECONDARY_ROUTE_TABLE_ID"
+
+aws ec2 create-route \
+  --region "$AWS_SECONDARY_REGION" \
+  --route-table-id "$SECONDARY_ROUTE_TABLE_ID" \
+  --destination-cidr-block 0.0.0.0/0 \
+  --gateway-id "$SECONDARY_IGW_ID" >/dev/null 2>&1 \
+  || echo "La ruta pública ya existe o no requiere cambios."
+
+echo "=== Crear o reutilizar Security Group secundario ==="
+
+export GLOBAL_SECONDARY_SG_ID=$(aws ec2 describe-security-groups \
+  --region "$AWS_SECONDARY_REGION" \
+  --filters "Name=vpc-id,Values=$SECONDARY_VPC_ID" "Name=group-name,Values=$GLOBAL_SECONDARY_SG_NAME" \
+  --query "SecurityGroups[0].GroupId" \
+  --output text 2>/dev/null || echo "None")
+
+if [ -z "$GLOBAL_SECONDARY_SG_ID" ] || [ "$GLOBAL_SECONDARY_SG_ID" = "None" ]; then
+  export GLOBAL_SECONDARY_SG_ID=$(aws ec2 create-security-group \
+    --region "$AWS_SECONDARY_REGION" \
+    --group-name "$GLOBAL_SECONDARY_SG_NAME" \
+    --description "Temporal SG Aurora Global DB Lab 9 secondary region" \
+    --vpc-id "$SECONDARY_VPC_ID" \
+    --query "GroupId" \
+    --output text)
+
+  aws ec2 create-tags \
+    --region "$AWS_SECONDARY_REGION" \
+    --resources "$GLOBAL_SECONDARY_SG_ID" \
+    --tags Key=Lab,Value=09 Key=Name,Value="$GLOBAL_SECONDARY_SG_NAME" >/dev/null
+fi
+
+aws ec2 authorize-security-group-ingress \
+  --region "$AWS_SECONDARY_REGION" \
+  --group-id "$GLOBAL_SECONDARY_SG_ID" \
+  --protocol tcp \
+  --port "$AURORA_PORT" \
+  --cidr 0.0.0.0/0 >/dev/null 2>&1 \
+  || echo "Regla TCP/$AURORA_PORT ya existe en Security Group secundario."
+
+echo "Security Group secundario: $GLOBAL_SECONDARY_SG_ID"
+
+echo "=== Crear o reutilizar DB Subnet Group secundario ==="
+
+if aws rds describe-db-subnet-groups \
+  --db-subnet-group-name "$GLOBAL_SECONDARY_DB_SUBNET_GROUP" \
+  --region "$AWS_SECONDARY_REGION" >/dev/null 2>&1; then
+
+  echo "DB Subnet Group secundario existente: $GLOBAL_SECONDARY_DB_SUBNET_GROUP"
 
 else
 
-  echo "Aurora Global Database no existe en este entorno. Se documentará arquitectura objetivo." \
-    | tee 09_global_database_no_disponible.txt
+  aws rds create-db-subnet-group \
+    --db-subnet-group-name "$GLOBAL_SECONDARY_DB_SUBNET_GROUP" \
+    --db-subnet-group-description "Subnet group for Aurora Global DB Lab 9 secondary cluster" \
+    --subnet-ids $SECONDARY_SUBNET_IDS \
+    --region "$AWS_SECONDARY_REGION" \
+    --tags Key=Lab,Value=09 Key=Component,Value=AuroraGlobalDB >/dev/null
 
-  cat > 09_diseno_dr_multi_region.md <<DOC
-# Diseño objetivo DR multi-región — Aurora Global Database
+  echo "DB Subnet Group secundario creado: $GLOBAL_SECONDARY_DB_SUBNET_GROUP"
+fi
+
+echo "=== Crear o reutilizar clúster secundario ligado al Global Database ==="
+
+if aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION" >/dev/null 2>&1; then
+
+  echo "Clúster secundario ya existe: $AURORA_SECONDARY_CLUSTER_ID"
+
+else
+
+  set +e
+
+  aws rds create-db-cluster \
+    --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+    --engine "$AURORA_ENGINE" \
+    --engine-version "$AURORA_ENGINE_VERSION" \
+    --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+    --db-subnet-group-name "$GLOBAL_SECONDARY_DB_SUBNET_GROUP" \
+    --vpc-security-group-ids "$GLOBAL_SECONDARY_SG_ID" \
+    --region "$AWS_SECONDARY_REGION" \
+    --tags Key=Lab,Value=09 Key=Component,Value=AuroraGlobalDBSecondary \
+    --output json \
+    2>&1 | tee 09_secondary_cluster_create.json
+
+  CREATE_CLUSTER_RC=${PIPESTATUS[0]}
+  set -e
+
+  if [ "$CREATE_CLUSTER_RC" -ne 0 ]; then
+    echo "ERROR: No se pudo crear el clúster secundario."
+    echo "Revisa 09_secondary_cluster_create.json"
+    exit "$CREATE_CLUSTER_RC"
+  fi
+
+  echo "Clúster secundario solicitado."
+fi
+
+echo "=== Esperar clúster secundario disponible antes de crear instancia ==="
+
+aws rds wait db-cluster-available \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION"
+
+echo "=== Crear o reutilizar instancia reader secundaria ==="
+
+if aws rds describe-db-instances \
+  --db-instance-identifier "$AURORA_SECONDARY_INSTANCE_ID" \
+  --region "$AWS_SECONDARY_REGION" >/dev/null 2>&1; then
+
+  echo "Instancia secundaria ya existe: $AURORA_SECONDARY_INSTANCE_ID"
+
+else
+
+  set +e
+
+  aws rds create-db-instance \
+    --db-instance-identifier "$AURORA_SECONDARY_INSTANCE_ID" \
+    --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+    --engine "$AURORA_ENGINE" \
+    --db-instance-class "${AURORA_INSTANCE_CLASS:-db.r6g.large}" \
+    --publicly-accessible \
+    --region "$AWS_SECONDARY_REGION" \
+    --tags Key=Lab,Value=09 Key=Component,Value=AuroraGlobalDBSecondaryInstance \
+    --output json \
+    2>&1 | tee 09_secondary_instance_create.json
+
+  CREATE_INSTANCE_RC=${PIPESTATUS[0]}
+  set -e
+
+  if [ "$CREATE_INSTANCE_RC" -ne 0 ]; then
+    echo "ERROR: No se pudo crear la instancia secundaria."
+    echo "Revisa 09_secondary_instance_create.json"
+    exit "$CREATE_INSTANCE_RC"
+  fi
+
+  echo "Instancia secundaria solicitada."
+fi
+
+echo "=== Esperar instancia y clúster secundario disponibles ==="
+
+aws rds wait db-instance-available \
+  --db-instance-identifier "$AURORA_SECONDARY_INSTANCE_ID" \
+  --region "$AWS_SECONDARY_REGION"
+
+aws rds wait db-cluster-available \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION"
+
+echo "=== Guardar evidencia de Global Database ==="
+
+aws rds describe-global-clusters \
+  --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "GlobalClusters[0].{GlobalCluster:GlobalClusterIdentifier,Estado:Status,Engine:Engine,EngineVersion:EngineVersion,Members:GlobalClusterMembers}" \
+  --output json \
+  | tee 09_global_database_descripcion.json >/dev/null
+
+aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION" \
+  --query "DBClusters[0].{Cluster:DBClusterIdentifier,Estado:Status,Endpoint:Endpoint,ReaderEndpoint:ReaderEndpoint,GlobalCluster:GlobalClusterIdentifier,Members:DBClusterMembers}" \
+  --output json \
+  | tee 09_global_database_secondary_cluster.json >/dev/null
+
+export AURORA_SECONDARY_ENDPOINT=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION" \
+  --query "DBClusters[0].Endpoint" \
+  --output text)
+
+echo "Endpoint secundario: $AURORA_SECONDARY_ENDPOINT"
+
+echo "=== Crear dato simple en primaria para validar replicación ==="
+
+psql "host=$AURORA_ENDPOINT port=$AURORA_PORT dbname=$AURORA_DBNAME user=$AURORA_MASTER_USER password=$AURORA_MASTER_PASSWORD sslmode=require connect_timeout=10" <<'SQL' \
+  | tee 09_globaldb_primary_write.txt
+
+CREATE SCHEMA IF NOT EXISTS lab_globaldb;
+
+CREATE TABLE IF NOT EXISTS lab_globaldb.replication_test (
+    id INTEGER PRIMARY KEY,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO lab_globaldb.replication_test (id, message)
+VALUES (1, 'replicacion aurora global database lab 9')
+ON CONFLICT (id)
+DO UPDATE SET message = EXCLUDED.message,
+              created_at = now();
+
+SELECT id, message, created_at
+FROM lab_globaldb.replication_test;
+
+SQL
+
+echo "=== Validar lectura en región secundaria ==="
+
+for i in $(seq 1 30); do
+
+  if psql "host=$AURORA_SECONDARY_ENDPOINT port=$AURORA_PORT dbname=$AURORA_DBNAME user=$AURORA_MASTER_USER password=$AURORA_MASTER_PASSWORD sslmode=require connect_timeout=10" \
+    -c "SELECT pg_is_in_recovery() AS es_replica, id, message, created_at FROM lab_globaldb.replication_test WHERE id = 1;" \
+    2>&1 | tee 09_globaldb_secondary_validation.txt; then
+
+    if grep -q "replicacion aurora global database lab 9" 09_globaldb_secondary_validation.txt; then
+      echo "Replicación validada en región secundaria."
+      break
+    fi
+  fi
+
+  echo "Intento $i/30: esperando replicación visible en región secundaria..."
+  sleep 20
+
+  if [ "$i" -eq 30 ]; then
+    echo "ERROR: No se pudo validar la replicación en el tiempo esperado."
+    exit 1
+  fi
+done
+
+echo "=== Consultar lag de replicación CloudWatch si hay datos ==="
+
+export CW_END_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+export CW_START_TIME=$(date -u -d '30 minutes ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+aws cloudwatch get-metric-statistics \
+  --namespace "AWS/RDS" \
+  --metric-name "AuroraGlobalDBReplicationLag" \
+  --dimensions Name=DBClusterIdentifier,Value="$AURORA_SECONDARY_CLUSTER_ID" \
+  --start-time "$CW_START_TIME" \
+  --end-time "$CW_END_TIME" \
+  --period 60 \
+  --statistics Average Maximum \
+  --region "$AWS_SECONDARY_REGION" \
+  --query "sort_by(Datapoints, &Timestamp)[*].{Tiempo:Timestamp,Promedio:Average,Maximo:Maximum}" \
+  --output table \
+  | tee 09_global_database_replication_lag.txt || true
+
+echo "=== Persistir variables del ejemplo Global DB ==="
+
+cat > 09_globaldb_example_env.sh <<EOF
+export AURORA_GLOBAL_CLUSTER_ID='$AURORA_GLOBAL_CLUSTER_ID'
+export AURORA_SECONDARY_CLUSTER_ID='$AURORA_SECONDARY_CLUSTER_ID'
+export AURORA_SECONDARY_INSTANCE_ID='$AURORA_SECONDARY_INSTANCE_ID'
+export AURORA_SECONDARY_ENDPOINT='$AURORA_SECONDARY_ENDPOINT'
+export GLOBAL_SECONDARY_DB_SUBNET_GROUP='$GLOBAL_SECONDARY_DB_SUBNET_GROUP'
+export GLOBAL_SECONDARY_SG_ID='$GLOBAL_SECONDARY_SG_ID'
+export SECONDARY_VPC_ID='$SECONDARY_VPC_ID'
+export SECONDARY_IGW_ID='$SECONDARY_IGW_ID'
+export SECONDARY_ROUTE_TABLE_ID='$SECONDARY_ROUTE_TABLE_ID'
+export SECONDARY_SUBNET_IDS='$SECONDARY_SUBNET_IDS'
+export AWS_PRIMARY_REGION='$AWS_PRIMARY_REGION'
+export AWS_SECONDARY_REGION='$AWS_SECONDARY_REGION'
+export PRIMARY_CLUSTER_ARN='$PRIMARY_CLUSTER_ARN'
+EOF
+
+chmod 600 09_globaldb_example_env.sh
+
+echo "=== Crear diseño y runbook DR ==="
+
+cat > 09_diseno_dr_multi_region.md <<DOC
+# Diseño DR multi-región — Aurora Global Database
 
 ## Estado
 
-Aurora Global Database no está creado en este entorno de laboratorio.
+Se creó o reutilizó un ejemplo simple de Aurora Global Database para el laboratorio.
 
-## Arquitectura objetivo
-
-| Componente | Región primaria | Región secundaria |
-|---|---|---|
-| Aurora PostgreSQL Cluster | $AWS_PRIMARY_REGION | $AWS_SECONDARY_REGION |
-| Rol | Writer | Reader / DR |
-| Replicación | Origen | Destino |
-| Objetivo | Operación principal | Recuperación ante desastre |
-
-## Objetivos sugeridos
-
-| Métrica | Objetivo recomendado |
+| Elemento | Valor |
 |---|---|
-| RPO | Menor a 5 segundos para cargas críticas, sujeto a validación real |
-| RTO | Menor a 15 minutos para recuperación operativa inicial |
-| Prueba DR | Trimestral o por ciclo de release mayor |
-| Runbook | Requerido |
-| Validación aplicación | Requerida |
+| Global Database | $AURORA_GLOBAL_CLUSTER_ID |
+| Región primaria | $AWS_PRIMARY_REGION |
+| Cluster primario | $AURORA_CLUSTER_ID |
+| Región secundaria | $AWS_SECONDARY_REGION |
+| Cluster secundario | $AURORA_SECONDARY_CLUSTER_ID |
+| Instancia secundaria | $AURORA_SECONDARY_INSTANCE_ID |
+| Endpoint secundario | $AURORA_SECONDARY_ENDPOINT |
+
+## Validación realizada
+
+Se creó una tabla simple en la región primaria:
+
+\`lab_globaldb.replication_test\`
+
+y se validó su lectura desde la región secundaria.
+
+## RPO/RTO sugeridos
+
+| Métrica | Objetivo de laboratorio |
+|---|---|
+| RPO | Validar con métrica AuroraGlobalDBReplicationLag |
+| RTO | Documentar procedimiento, no ejecutar failover automático |
+| Prueba DR | Controlada y autorizada |
+| Runbook | Requerido antes de producción |
 
 ## Switchover vs Failover
 
 | Operación | Uso recomendado |
 |---|---|
-| Switchover | Cambio planeado entre regiones sanas, por mantenimiento o rotación regional |
-| Failover | Recuperación ante evento no planeado o pérdida de región primaria |
+| Switchover | Cambio planeado entre regiones sanas |
+| Failover | Recuperación ante desastre o pérdida de región primaria |
 
-## Riesgos a documentar
+## Riesgos
 
-- DNS y endpoint cutover.
+- Propagación de DNS.
 - Reconexión de aplicaciones.
-- Secrets Manager en región secundaria.
+- Secretos en región secundaria.
 - Seguridad y rutas de red.
-- Monitoreo y alarmas.
-- Validación de escrituras posterior a recuperación.
 - Costos multi-región.
+- Validación de escritura después de recuperación.
+- Procedimiento de retorno a región primaria.
 DOC
 
-fi
+echo "=== Reto 6 completado ==="
+ls -lh 09_global_database_descripcion.json \
+       09_global_database_secondary_cluster.json \
+       09_globaldb_secondary_validation.txt \
+       09_diseno_dr_multi_region.md \
+       09_globaldb_example_env.sh
 ```
 
 </details>
@@ -1141,20 +1631,31 @@ fi
 ## 🔍 Validación
 
 ```bash
-ls -lh 09_*global* 09_diseno_dr_multi_region.md 2>/dev/null || true
+ls -lh 09_global_database_descripcion.json \
+       09_global_database_secondary_cluster.json \
+       09_globaldb_secondary_validation.txt \
+       09_diseno_dr_multi_region.md
+
+grep -E "replicacion aurora global database lab 9|es_replica" 09_globaldb_secondary_validation.txt
 ```
 
 ---
 
 ## 📌 Resultado esperado
 
-Si existe Global Database, debes tener evidencia real. Si no existe, debes tener el diseño objetivo de DR multi-región.
+Debes ver evidencia de Global Database y validación desde el clúster secundario. En la lectura secundaria, `pg_is_in_recovery()` debe devolver normalmente:
+
+```text
+t
+```
+
+porque el clúster secundario opera como reader.
 
 ---
 
 ## 🤖 Prompt de apoyo
 
-[Explicar este reto en ChatGPT](https://chatgpt.com/?q=Expl%C3%ADcame%20c%C3%B3mo%20evaluar%20una%20estrategia%20DR%20multi-regi%C3%B3n%20con%20Aurora%20Global%20Database%2C%20RPO%2C%20RTO%2C%20switchover%20y%20failover%20sin%20ejecutar%20un%20failover%20real.)
+[Explicar este reto en ChatGPT](https://chatgpt.com/?q=Expl%C3%ADcame%20c%C3%B3mo%20crear%20un%20ejemplo%20simple%20de%20Aurora%20Global%20Database%20con%20un%20cluster%20primario%20existente%20y%20un%20cluster%20secundario%20en%20otra%20regi%C3%B3n.)
 
 ---
 
@@ -1205,7 +1706,7 @@ Genera el archivo `09_arquitectura_aurora_final.md` con resumen ejecutivo, arqui
 <details>
 <summary>✅ Ver solución sugerida</summary>
 
-```bash
+````bash
 echo "=== Generar documento técnico de arquitectura ==="
 
 cat > 09_generate_architecture_doc.py <<'PY'
@@ -1399,7 +1900,7 @@ python3 09_generate_architecture_doc.py
 
 ls -lh 09_arquitectura_aurora_final.md
 head -40 09_arquitectura_aurora_final.md
-```
+````
 
 </details>
 
@@ -1599,13 +2100,6 @@ echo ""
 echo "Laboratorio 9 completado."
 echo "Archivo de evidencia:"
 ls -lh 09_evidencia_integrador_*.tar.gz
-
-echo ""
-echo "=== Limpieza opcional de infraestructura AWS ==="
-echo "Si el instructor solicita eliminar todo el ambiente, ejecuta:"
-echo ""
-echo "chmod +x 00_eliminar_laboratorio_9_aurora.sh"
-echo "./00_eliminar_laboratorio_9_aurora.sh"
 ```
 
 </details>
@@ -1628,6 +2122,15 @@ Debes tener:
 ```text
 09_evidencia_integrador_*.tar.gz
 09_arquitectura_aurora_final.md
+```
+
+### Ejecutar script de eliminación de infraestructura
+
+Si el instructor solicita eliminar también el clúster Aurora y los recursos AWS creados para esta práctica, ejecuta el script de eliminación desde AWS CloudShell:
+
+```bash
+chmod +x 00_eliminar_laboratorio_9_aurora.sh
+./00_eliminar_laboratorio_9_aurora.sh
 ```
 
 ---
@@ -1657,10 +2160,10 @@ Al finalizar la práctica, debes haber completado lo siguiente:
 | Estadísticas | Revisadas |
 | Benchmark directo | Ejecutado |
 | RDS Proxy | Validado o documentado como recomendado |
-| Performance Insights | Validado |
+| Performance Insights | Validado con DbiResourceId |
 | CloudWatch metrics | Consultadas |
 | Dashboard mínimo | Generado como JSON |
-| DR multi-región | Validado o documentado |
+| Aurora Global Database | Creado o reutilizado |
 | Documento técnico | Generado |
 | Estado final previo al cierre | Validado |
 | Evidencia | Empaquetada |
@@ -1688,4 +2191,4 @@ Después de completar este laboratorio, debes poder explicar y defender una arqu
 
 # 📌 Resumen del laboratorio
 
-En este laboratorio integrador validaste una arquitectura Aurora PostgreSQL desde el punto de vista de rendimiento, conexión, observabilidad y recuperación ante desastre. Primero preparaste variables y documentaste el estado base del clúster. Después revisaste parámetros, extensiones, índices, estadísticas y Top SQL. Ejecutaste un benchmark corto para obtener evidencia de rendimiento, validaste RDS Proxy si estaba disponible, revisaste Performance Insights y CloudWatch, evaluaste la existencia o diseño de Aurora Global Database y generaste un documento técnico final de arquitectura. Finalmente validaste los entregables, empaquetaste evidencia y dejaste la limpieza de infraestructura como una acción controlada del instructor. La práctica refuerza el enfoque profesional de cierre: no basta con ejecutar comandos; debes medir, evaluar, documentar y justificar decisiones técnicas.
+En este laboratorio integrador validaste una arquitectura Aurora PostgreSQL desde el punto de vista de rendimiento, conexión, observabilidad y recuperación ante desastre. Primero preparaste variables y documentaste el estado base del clúster. Después revisaste parámetros, extensiones, índices, estadísticas y Top SQL. Ejecutaste un benchmark corto para obtener evidencia de rendimiento, validaste RDS Proxy si estaba disponible, revisaste Performance Insights y CloudWatch, creaste o reutilizaste un ejemplo simple real de Aurora Global Database y generaste un documento técnico final de arquitectura. Finalmente validaste los entregables, empaquetaste evidencia y dejaste la limpieza de infraestructura como una acción controlada del instructor. La práctica refuerza el enfoque profesional de cierre: no basta con ejecutar comandos; debes medir, evaluar, documentar y justificar decisiones técnicas.
