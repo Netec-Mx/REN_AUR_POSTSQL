@@ -714,6 +714,59 @@ ORDER BY total_exec_time DESC
 LIMIT 10;
 
 SQL
+
+echo "=== Generar carga visible para Database Insights ==="
+echo "=== Esta carga debe ejecutarse ANTES de crear índices ==="
+
+cat > 08_database_insights_bad_query.sql <<'SQL'
+\set ON_ERROR_STOP on
+
+SELECT
+  order_id,
+  customer_id,
+  amount,
+  created_at
+FROM lab_diagnostics.orders_diag
+WHERE status = 'pending'
+  AND created_at >= now() - interval '30 days'
+ORDER BY created_at DESC
+LIMIT 100;
+SQL
+
+echo "=== Ejecutar consulta problemática durante varios minutos ==="
+
+for i in $(seq 1 120); do
+  echo "Ejecución problemática $i/120"
+
+  psql "host=$AURORA_ENDPOINT port=$AURORA_PORT dbname=$AURORA_DBNAME user=$AURORA_MASTER_USER password=$AURORA_MASTER_PASSWORD sslmode=require connect_timeout=10" \
+    -f 08_database_insights_bad_query.sql >/dev/null 2>&1 || true
+
+  sleep 1
+done
+
+echo "=== Capturar plan problemático para correlacionar con Database Insights ==="
+
+psql "host=$AURORA_ENDPOINT port=$AURORA_PORT dbname=$AURORA_DBNAME user=$AURORA_MASTER_USER password=$AURORA_MASTER_PASSWORD sslmode=require" <<'SQL' \
+  | tee 08_database_insights_bad_query_plan_before.txt
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT
+  order_id,
+  customer_id,
+  amount,
+  created_at
+FROM lab_diagnostics.orders_diag
+WHERE status = 'pending'
+  AND created_at >= now() - interval '30 days'
+ORDER BY created_at DESC
+LIMIT 100;
+
+SQL
+
+echo "=== Espera sugerida ==="
+echo "Espera de 3 a 10 minutos y revisa CloudWatch Database Insights."
+echo "Ruta sugerida:"
+echo "CloudWatch -> Database Insights -> Database instance -> Top SQL / SQL statements / DB Load"
 ```
 
 </details>
