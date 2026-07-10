@@ -1524,6 +1524,154 @@ for i in $(seq 1 30); do
   fi
 done
 
+echo "=== Preparar failover global controlado después de validar réplica ==="
+
+# IMPORTANTE:
+# Este bloque ejecuta un FAILOVER real de Aurora Global Database después de validar
+# que la réplica secundaria ya puede leer el dato replicado.
+#
+# Se usa failover-global-cluster con --allow-data-loss porque es la opción más rápida
+# para un escenario de desastre/laboratorio. Puede existir pérdida de transacciones
+# que no se hayan replicado al clúster secundario antes del failover.
+#
+# Para un cambio planeado sin pérdida de datos, usa switchover-global-cluster en lugar
+# de failover-global-cluster. El switchover suele tardar más porque sincroniza los
+# clústeres antes de cambiar los roles.
+
+export AURORA_SECONDARY_CLUSTER_ARN=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION" \
+  --query "DBClusters[0].DBClusterArn" \
+  --output text)
+
+echo "Global Database:       $AURORA_GLOBAL_CLUSTER_ID"
+echo "Target secundario ARN: $AURORA_SECONDARY_CLUSTER_ARN"
+echo "Región primaria actual: $AWS_PRIMARY_REGION"
+echo "Región objetivo:        $AWS_SECONDARY_REGION"
+
+echo "=== Ejecutar failover global: la región secundaria será promovida a primaria ==="
+
+export GLOBAL_FAILOVER_START_EPOCH=$(date +%s)
+
+set +e
+aws rds failover-global-cluster \
+  --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+  --target-db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ARN" \
+  --allow-data-loss \
+  --region "$AWS_PRIMARY_REGION" \
+  --output json \
+  2>&1 | tee 09_global_database_failover_start.json
+
+FAILOVER_RC=${PIPESTATUS[0]}
+set -e
+
+if [ "$FAILOVER_RC" -ne 0 ]; then
+  echo "ERROR: No se pudo iniciar el failover global."
+  echo "Revisa 09_global_database_failover_start.json"
+  exit "$FAILOVER_RC"
+fi
+
+echo "Failover solicitado. Esperando a que el clúster secundario quede como writer..."
+
+for i in $(seq 1 90); do
+  export GLOBAL_FAILOVER_STATUS=$(aws rds describe-global-clusters \
+    --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+    --region "$AWS_PRIMARY_REGION" \
+    --query "GlobalClusters[0].Status" \
+    --output text 2>/dev/null || echo "unknown")
+
+  export TARGET_IS_WRITER=$(aws rds describe-global-clusters \
+    --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+    --region "$AWS_PRIMARY_REGION" \
+    --query "GlobalClusters[0].GlobalClusterMembers[?DBClusterArn=='$AURORA_SECONDARY_CLUSTER_ARN'].IsWriter | [0]" \
+    --output text 2>/dev/null || echo "False")
+
+  echo "Intento $i/90 - GlobalStatus=$GLOBAL_FAILOVER_STATUS - TargetIsWriter=$TARGET_IS_WRITER"
+
+  if [ "$GLOBAL_FAILOVER_STATUS" = "available" ] && [ "$TARGET_IS_WRITER" = "True" ]; then
+    echo "Failover completado: el clúster secundario ahora es writer."
+    break
+  fi
+
+  sleep 20
+
+  if [ "$i" -eq 90 ]; then
+    echo "ERROR: El failover no finalizó dentro del tiempo esperado."
+    exit 1
+  fi
+done
+
+export GLOBAL_FAILOVER_END_EPOCH=$(date +%s)
+export GLOBAL_FAILOVER_SECONDS=$((GLOBAL_FAILOVER_END_EPOCH - GLOBAL_FAILOVER_START_EPOCH))
+
+echo "Duración observada del failover: ${GLOBAL_FAILOVER_SECONDS} segundos"
+
+echo "=== Esperar clúster promovido disponible en región secundaria ==="
+
+aws rds wait db-cluster-available \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION"
+
+aws rds wait db-instance-available \
+  --db-instance-identifier "$AURORA_SECONDARY_INSTANCE_ID" \
+  --region "$AWS_SECONDARY_REGION"
+
+export AURORA_NEW_PRIMARY_ENDPOINT=$(aws rds describe-db-clusters \
+  --db-cluster-identifier "$AURORA_SECONDARY_CLUSTER_ID" \
+  --region "$AWS_SECONDARY_REGION" \
+  --query "DBClusters[0].Endpoint" \
+  --output text)
+
+echo "Nuevo endpoint primario después del failover: $AURORA_NEW_PRIMARY_ENDPOINT"
+
+echo "=== Validar escritura en la nueva primaria después del failover ==="
+
+psql "host=$AURORA_NEW_PRIMARY_ENDPOINT port=$AURORA_PORT dbname=$AURORA_DBNAME user=$AURORA_MASTER_USER password=$AURORA_MASTER_PASSWORD sslmode=require connect_timeout=10" <<'SQL' \
+  | tee 09_globaldb_post_failover_write.txt
+
+SELECT pg_is_in_recovery() AS es_replica_esperado_false;
+
+INSERT INTO lab_globaldb.replication_test (id, message)
+VALUES (2, 'escritura posterior al failover aurora global database lab 9')
+ON CONFLICT (id)
+DO UPDATE SET message = EXCLUDED.message,
+              created_at = now();
+
+SELECT id, message, created_at
+FROM lab_globaldb.replication_test
+ORDER BY id;
+
+SQL
+
+echo "=== Guardar evidencia posterior al failover ==="
+
+aws rds describe-global-clusters \
+  --global-cluster-identifier "$AURORA_GLOBAL_CLUSTER_ID" \
+  --region "$AWS_PRIMARY_REGION" \
+  --query "GlobalClusters[0].{GlobalCluster:GlobalClusterIdentifier,Estado:Status,Members:GlobalClusterMembers,FailoverState:FailoverState}" \
+  --output json \
+  | tee 09_global_database_post_failover.json >/dev/null
+
+cat > 09_globaldb_failover_result.md <<EOF
+# Resultado de failover — Aurora Global Database
+
+| Elemento | Valor |
+|---|---|
+| Global Database | $AURORA_GLOBAL_CLUSTER_ID |
+| Clúster promovido | $AURORA_SECONDARY_CLUSTER_ID |
+| Región promovida | $AWS_SECONDARY_REGION |
+| Nuevo endpoint primario | $AURORA_NEW_PRIMARY_ENDPOINT |
+| Duración observada | ${GLOBAL_FAILOVER_SECONDS} segundos |
+| Tipo de operación | failover-global-cluster --allow-data-loss |
+
+## Nota
+
+El failover se ejecutó después de validar lectura desde la réplica secundaria.
+Esta operación promueve la región secundaria como nueva primaria con capacidad de escritura.
+
+Para una operación planeada sin pérdida de datos, usa switchover-global-cluster.
+EOF
+
 echo "=== Consultar lag de replicación CloudWatch si hay datos ==="
 
 export CW_END_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
