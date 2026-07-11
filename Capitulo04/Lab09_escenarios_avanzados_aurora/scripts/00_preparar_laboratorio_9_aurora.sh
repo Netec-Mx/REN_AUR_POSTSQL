@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 00_preparar_laboratorio_9_aurora.sh
+# 00_preparar_laboratorio_9_aurora_CORREGIDO.sh
 # Preparación Práctica 9 - Arquitectura Aurora: optimización, observabilidad y DR
 #
 # Ejecutar desde AWS CloudShell:
 #
-#   chmod +x 00_preparar_laboratorio_9_aurora.sh
-#   ./00_preparar_laboratorio_9_aurora.sh
+#   chmod +x 00_preparar_laboratorio_9_aurora_CORREGIDO.sh
+#   ./00_preparar_laboratorio_9_aurora_CORREGIDO.sh
 #   source ./lab9_aurora_env.sh
 #
 # Región estándar: us-west-2
@@ -83,76 +83,6 @@ AURORA_INSTANCE_ID=$AURORA_INSTANCE_ID
 AURORA_DBNAME=$AURORA_DBNAME
 AURORA_INSTANCE_CLASS=$AURORA_INSTANCE_CLASS
 EOF
-
-# -----------------------------
-# Validaciones locales
-# -----------------------------
-log "Validando identidad AWS y herramientas base"
-
-aws sts get-caller-identity --output table >/dev/null \
-  || fail "No se pudo validar la identidad AWS. Revisa permisos o sesión de CloudShell."
-
-ok "Identidad AWS validada"
-
-aws configure set region "$AWS_PRIMARY_REGION" >/dev/null
-ok "Región configurada: $AWS_PRIMARY_REGION"
-
-if ! command -v jq >/dev/null 2>&1; then
-  warn "jq no está disponible. Intentando instalar jq..."
-
-  if command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y jq
-  elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y jq
-  else
-    fail "No se encontró dnf ni yum para instalar jq."
-  fi
-fi
-
-ok "jq disponible: $(jq --version)"
-
-if ! command -v psql >/dev/null 2>&1; then
-  warn "psql no está disponible. Intentando instalar cliente PostgreSQL..."
-
-  if command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y postgresql15 || sudo dnf install -y postgresql16 || sudo dnf install -y postgresql
-  elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y postgresql15 || sudo yum install -y postgresql16 || sudo yum install -y postgresql
-  else
-    fail "No se encontró dnf ni yum para instalar psql."
-  fi
-fi
-
-ok "psql disponible: $(psql --version)"
-
-if ! command -v pgbench >/dev/null 2>&1; then
-  warn "pgbench no está disponible. Intentando instalar herramientas contrib de PostgreSQL..."
-
-  if command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y postgresql15-contrib || sudo dnf install -y postgresql16-contrib || sudo dnf install -y postgresql-contrib || sudo dnf install -y postgresql15
-  elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y postgresql15-contrib || sudo yum install -y postgresql16-contrib || sudo yum install -y postgresql-contrib || sudo yum install -y postgresql15
-  else
-    fail "No se encontró dnf ni yum para instalar pgbench."
-  fi
-fi
-
-if ! command -v pgbench >/dev/null 2>&1; then
-  fail "pgbench no quedó disponible después de instalar paquetes PostgreSQL."
-fi
-
-pgbench --help >/dev/null 2>&1 || fail "pgbench existe pero no responde correctamente a --help."
-ok "pgbench disponible y funcional"
-
-if ! command -v python3 >/dev/null 2>&1; then
-  fail "python3 no está disponible en CloudShell."
-fi
-
-ok "python3 disponible: $(python3 --version 2>&1)"
-
-log "Directorio de trabajo del Laboratorio 9"
-pwd
-ok "LAB_WORKDIR configurado en raíz actual: $LAB_WORKDIR"
 
 # ------------------------------------------------------------------------------
 # VPC default, subnets y SG primario
